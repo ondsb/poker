@@ -1,0 +1,20 @@
+[project]
+name = "poker-ml"
+version = "0.1.0"
+description = "Poker hand history processing and ML pipeline"
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib>=3.10.3",
+    "pandas>=2.3.0",
+    "pytest>=8.4.1",
+    "scikit-learn>=1.7.0",
+    "seaborn>=0.13.2",
+    "xgboost>=3.0.2",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "numpy",
+    "pandas",
+    "tqdm"
+]
