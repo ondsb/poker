@@ -10,17 +10,19 @@ help:
 	@echo "Setup:"
 	@echo "  install          Install dependencies"
 	@echo "  clean           Clean up temporary files"
+	@echo "  cleanup-unused  Clean up unused directories and files"
+	@echo "  cleanup-all     Complete cleanup (temp files + unused files)"
 	@echo ""
 	@echo "Testing:"
 	@echo "  test            Run all tests"
 	@echo ""
 	@echo "Data Processing:"
-	@echo "  preprocess-optimized Preprocess full 27GB dataset"
-	@echo "  preprocess-optimized-sample Preprocess sample dataset for testing"
+	@echo "  preprocess Preprocess full 27GB dataset (conservative, 10K chunks, 2 cores)"
+	@echo "  preprocess-sample Preprocess sample dataset for testing"
 	@echo ""
 	@echo "Model Operations:"
-	@echo "  train-model     Train model on optimized data (50 chunks)"
-	@echo "  train-optimized-quick Train model on subset (10 chunks) for testing"
+	@echo "  train-model     Train poker win probability model on conservative data"
+	@echo "  train-model-sample Train model on sample data (2 chunks) for testing"
 	@echo ""
 	@echo "Pipelines:"
 	@echo "  sample-pipeline Complete sample pipeline (sample preprocess + quick train)"
@@ -45,59 +47,67 @@ clean:
 	find . -type f -name "batch_*.jsonl" -delete
 	@echo "✅ Cleanup complete"
 
+cleanup-unused:
+	@echo "🧹 Cleaning up unused directories and files..."
+	PYTHONPATH=. uv run python scripts/cleanup_unused.py
+	@echo "✅ Unused files cleanup complete"
+
+cleanup-all: clean cleanup-unused
+	@echo "🧹 Complete cleanup finished"
+
 # Testing
 test:
 	@echo "Running tests..."
 	PYTHONPATH=. uv run pytest tests/ -v
 
-# Data Processing
-preprocess-optimized:
-	@echo "🚀 Starting optimized preprocessing of full 27GB dataset with hole cards from showdown actions..."
-	@mkdir -p data/processed/optimized
-	PYTHONPATH=. uv run python src/data/preprocess_optimized.py \
+preprocess:
+	@echo "🚀 Starting conservative preprocessing of full 27GB dataset (5K chunks, 1 core)..."
+	@mkdir -p data/processed/conservative
+	PYTHONPATH=. uv run python src/data/preprocess_conservative.py \
 		--input data/raw/poker_training_data.jsonl \
-		--output data/processed/optimized \
-		--chunk-size 100000
-
-preprocess-optimized-sample:
-	@echo "🧪 Starting optimized preprocessing of sample dataset for testing..."
-	@mkdir -p data/processed/optimized
-	PYTHONPATH=. uv run python src/data/preprocess_optimized.py \
-		--input data/raw/poker_training_data.jsonl \
-		--output data/processed/optimized \
+		--output data/processed/conservative \
 		--chunk-size 100000 \
+		--max-workers 8
+
+preprocess-sample:
+	@echo "🧪 Starting conservative preprocessing of sample dataset for testing..."
+	@mkdir -p data/processed/conservative
+	PYTHONPATH=. uv run python src/data/preprocess_conservative.py \
+		--input data/raw/poker_training_data.jsonl \
+		--output data/processed/conservative \
+		--chunk-size 10000 \
+		--max-workers 8 \
 		--max-chunks 5
 
 # Model Operations
 train-model:
-	@echo "Training model on optimized data..."
-	@mkdir -p models
-	PYTHONPATH=. uv run python src/models/train_model_optimized.py \
-		--data-pattern "data/processed/optimized/chunk_*.parquet" \
-		--output-dir models \
-		--max-chunks 50
+	@echo "🤖 Training poker win probability model on conservative data..."
+	@mkdir -p models/conservative
+	PYTHONPATH=. uv run python src/models/train_conservative.py \
+		--data-dir data/processed/conservative \
+		--output-dir models/conservative
 
-train-optimized-quick:
-	@echo "⚡ Quick training on subset of data for testing..."
-	@mkdir -p models
-	PYTHONPATH=. uv run python src/models/train_model_optimized.py \
-		--data-pattern "data/processed/optimized/chunk_*.parquet" \
-		--output-dir models \
-		--max-chunks 10
+train-model-sample:
+	@echo "🧪 Training model on sample data (first 2 chunks)..."
+	@mkdir -p models/conservative
+	PYTHONPATH=. uv run python src/models/train_conservative.py \
+		--data-dir data/processed/conservative \
+		--output-dir models/conservative \
+		--max-chunks 2
 
 # Pipelines
 sample-pipeline:
 	@echo "🎯 Running SAMPLE pipeline (sample preprocess + quick train)..."
 	@echo "Step 1: Preprocessing sample data..."
-	$(MAKE) preprocess-optimized-sample
+	$(MAKE) preprocess-sample
 	@echo "Step 2: Quick training on subset..."
-	$(MAKE) train-optimized-quick
+	$(MAKE) train-model-sample
 	@echo "✅ Sample pipeline completed! Model ready for testing."
 
 full-pipeline:
 	@echo "🚀 Running FULL pipeline (full preprocess + full train)..."
 	@echo "Step 1: Preprocessing full dataset..."
-	$(MAKE) preprocess-optimized
+	$(MAKE) preprocess
 	@echo "Step 2: Full training on large dataset..."
 	$(MAKE) train-model
 	@echo "✅ Full pipeline completed! Production model ready."
