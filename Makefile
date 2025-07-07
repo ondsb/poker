@@ -1,7 +1,7 @@
 # Poker ML Project Makefile
 # Use: make <target>
 
-.PHONY: help install test clean run-app preprocess-focused preprocess-focused-sample train-focused train-focused-sample focused-pipeline status
+.PHONY: help install test clean run-app preprocess-focused preprocess-focused-sample preprocess-pluribus preprocess-pluribus-sample combine-pluribus train-focused train-focused-sample focused-pipeline status
 
 # Default target
 help:
@@ -73,8 +73,8 @@ preprocess-focused-sample:
 	PYTHONPATH=. uv run python src/data/preprocess_focused.py \
 		--input data/raw/poker_training_data.jsonl \
 		--output data/processed/focused \
-		--chunk-size 1000000 \
-		--max-chunks 10
+		--chunk-size 2000000 \
+		--max-chunks 20
 
 # Model Operations
 train-focused:
