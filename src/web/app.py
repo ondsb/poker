@@ -9,15 +9,15 @@ import warnings
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import joblib
 
 warnings.filterwarnings("ignore")
 
 # Page config
 st.set_page_config(
-    page_title="Poker Model Minimal Demo", 
-    page_icon="♠️", 
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="Poker Win Probability Demo",
+    page_icon="♠️",
+    layout="wide"
 )
 
 # Custom CSS for better styling
@@ -75,560 +75,420 @@ st.markdown("""
         background-color: #667eea;
         color: white;
     }
+    .player-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        color: white;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    .probability-high {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    }
+    .probability-medium {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    }
+    .probability-low {
+        background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
+        color: #333;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # Header
 st.markdown("""
 <div class="main-header">
-    <h1>♠️ Poker Model Minimal Demo</h1>
-    <p>Minimal demo: generate a full random model input, view all features, and predict win probability.</p>
+    <h1>♠️ Poker Win Probability Demo (Focused Model)</h1>
+    <p>Generate a random 6-player hand and predict win probability for each player using the focused model with opponent features.</p>
 </div>
 """, unsafe_allow_html=True)
 
 @st.cache_resource
-def load_model():
-    """Load the trained CatBoost model."""
+def load_focused_model():
+    """Load the trained focused model and metadata."""
+    model_path = Path("models/focused/poker_model.cbm")
+    metadata_path = Path("models/focused/model_metadata.joblib")
+    encoders_path = Path("models/focused/label_encoders.joblib")
+    features_path = Path("models/focused/feature_columns.txt")
+    
+    if not model_path.exists():
+        st.error(f"Model file not found at {model_path}. Please train the model first.")
+        return None, None, None, None
+    
     try:
-        model_path = Path("models/conservative/poker_win_probability_model.cbm")
-
-        if not model_path.exists():
-            st.error("Model file not found. Please train the model first using: `make train-model`")
-            return None
-
-        # Load model
         model = CatBoostClassifier()
         model.load_model(str(model_path))
-        return model
+        
+        metadata = joblib.load(metadata_path) if metadata_path.exists() else None
+        label_encoders = joblib.load(encoders_path) if encoders_path.exists() else None
+        
+        # Load feature columns
+        feature_columns = []
+        if features_path.exists():
+            with open(features_path, 'r') as f:
+                feature_columns = [line.strip() for line in f.readlines()]
+        
+        return model, metadata, label_encoders, feature_columns
     except Exception as e:
-        st.error(f"Error loading model: {str(e)}")
-        return None
+        st.error(f"Error loading model: {e}")
+        return None, None, None, None
 
-def get_card_options():
-    """Get all possible card options."""
-    ranks = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"]
-    suits = ["h", "d", "c", "s"]
-    
-    cards = []
-    for rank in ranks:
-        for suit in suits:
-            cards.append(f"{rank}{suit}")
-    
-    return ["unknown"] + cards
+CARD_RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"]
+CARD_SUITS = ["h", "d", "c", "s"]
+
+def get_deck():
+    """Get a fresh deck of cards."""
+    return [f"{rank}{suit}" for rank in CARD_RANKS for suit in CARD_SUITS]
 
 def parse_card(card_str):
-    """Parse a card string like 'As' into rank and suit."""
+    """Parse a card string into rank and suit."""
     if not card_str or card_str == "unknown":
         return None, None
-    
-    if len(card_str) < 2:
-        return None, None
-    
-    rank = card_str[:-1]
-    suit = card_str[-1]
-    return rank, suit
+    return card_str[:-1], card_str[-1]
 
-def calculate_hand_features(hole_card1, hole_card2):
-    """Calculate hand strength features from hole cards."""
-    if hole_card1 == "unknown" or hole_card2 == "unknown":
-        return {
-            "has_hole_cards": 0,
-            "hole_card_high": 0,
-            "hole_card_low": 0,
-            "hole_cards_suited": 0,
-            "hole_cards_paired": 0,
-            "hole_card_gap": 0,
-            "hole_card_rank_sum": 0,
-            "is_broadway": 0,
-            "is_ace": 0,
-            "is_king": 0,
-            "is_queen": 0,
-            "is_jack": 0,
-            "is_ten": 0,
-        }
+def player_hand_features(card1, card2):
+    """Calculate hand features for a player."""
+    rank_map = {r: i+2 for i, r in enumerate(CARD_RANKS)}
+    if card1 == "unknown" or card2 == "unknown":
+        return dict(
+            has_hole_cards=0, 
+            hole_high_card=0, 
+            hole_low_card=0, 
+            hole_is_paired=0, 
+            hole_is_suited=0, 
+            hole_is_broadway=0, 
+            hole_has_ace=0
+        )
     
-    rank1, suit1 = parse_card(hole_card1)
-    rank2, suit2 = parse_card(hole_card2)
+    r1, s1 = parse_card(card1)
+    r2, s2 = parse_card(card2)
+    n1, n2 = rank_map.get(r1, 0), rank_map.get(r2, 0)
     
-    if not rank1 or not rank2:
-        return {
-            "has_hole_cards": 0,
-            "hole_card_high": 0,
-            "hole_card_low": 0,
-            "hole_cards_suited": 0,
-            "hole_cards_paired": 0,
-            "hole_card_gap": 0,
-            "hole_card_rank_sum": 0,
-            "is_broadway": 0,
-            "is_ace": 0,
-            "is_king": 0,
-            "is_queen": 0,
-            "is_jack": 0,
-            "is_ten": 0,
-        }
-    
-    # Convert ranks to numbers
-    rank_map = {
-        "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9,
-        "T": 10, "J": 11, "Q": 12, "K": 13, "A": 14
-    }
-    
-    num1 = rank_map.get(rank1, 0)
-    num2 = rank_map.get(rank2, 0)
-    
-    high_card = max(num1, num2)
-    low_card = min(num1, num2)
-    suited = 1 if suit1 == suit2 else 0
-    paired = 1 if rank1 == rank2 else 0
-    gap = abs(num1 - num2)
-    rank_sum = num1 + num2
-    broadway = 1 if high_card >= 10 else 0
-    
-    return {
-        "has_hole_cards": 1,
-        "hole_card_high": high_card,
-        "hole_card_low": low_card,
-        "hole_cards_suited": suited,
-        "hole_cards_paired": paired,
-        "hole_card_gap": gap,
-        "hole_card_rank_sum": rank_sum,
-        "is_broadway": broadway,
-        "is_ace": 1 if high_card == 14 else 0,
-        "is_king": 1 if high_card == 13 else 0,
-        "is_queen": 1 if high_card == 12 else 0,
-        "is_jack": 1 if high_card == 11 else 0,
-        "is_ten": 1 if high_card == 10 else 0,
-    }
+    return dict(
+        has_hole_cards=1,
+        hole_high_card=max(n1, n2),
+        hole_low_card=min(n1, n2),
+        hole_is_paired=int(r1 == r2),
+        hole_is_suited=int(s1 == s2),
+        hole_is_broadway=int(max(n1, n2) >= 10),
+        hole_has_ace=int(n1 == 14 or n2 == 14)
+    )
 
-def calculate_board_features(board_cards):
+def board_features(board):
     """Calculate board features."""
-    if not board_cards or all(card == "unknown" for card in board_cards):
-        return {
-            "board_card_count": 0,
-            "board_high_card": 0,
-            "board_low_card": 0,
-            "board_rank_sum": 0,
-            "board_broadway_count": 0,
-            "board_ace_count": 0,
-            "board_king_count": 0,
-            "board_queen_count": 0,
-            "board_jack_count": 0,
-            "board_ten_count": 0,
-        }
+    rank_map = {r: i+2 for i, r in enumerate(CARD_RANKS)}
+    ranks = [rank_map.get(parse_card(c)[0], 0) for c in board if c != "unknown"]
+    suits = [parse_card(c)[1] for c in board if c != "unknown"]
     
-    rank_map = {
-        "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9,
-        "T": 10, "J": 11, "Q": 12, "K": 13, "A": 14
-    }
+    is_paired = int(len(set(ranks)) < len(ranks)) if ranks else 0
+    is_suited = int(any(suits.count(s) >= 3 for s in set(suits))) if suits else 0
     
-    ranks = []
-    for card in board_cards:
-        if card != "unknown":
-            rank, _ = parse_card(card)
-            if rank:
-                ranks.append(rank_map.get(rank, 0))
-    
-    if not ranks:
-        return {
-            "board_card_count": 0,
-            "board_high_card": 0,
-            "board_low_card": 0,
-            "board_rank_sum": 0,
-            "board_broadway_count": 0,
-            "board_ace_count": 0,
-            "board_king_count": 0,
-            "board_queen_count": 0,
-            "board_jack_count": 0,
-            "board_ten_count": 0,
-        }
-    
-    high_card = max(ranks)
-    low_card = min(ranks)
-    rank_sum = sum(ranks)
-    broadway_count = sum(1 for r in ranks if r >= 10)
-    
-    return {
-        "board_card_count": len(ranks),
-        "board_high_card": high_card,
-        "board_low_card": low_card,
-        "board_rank_sum": rank_sum,
-        "board_broadway_count": broadway_count,
-        "board_ace_count": ranks.count(14),
-        "board_king_count": ranks.count(13),
-        "board_queen_count": ranks.count(12),
-        "board_jack_count": ranks.count(11),
-        "board_ten_count": ranks.count(10),
-    }
+    return dict(
+        board_card_count=len(ranks),
+        board_high_card=max(ranks) if ranks else 0,
+        board_has_broadway=int(any(r >= 10 for r in ranks)),
+        board_has_ace=int(any(r == 14 for r in ranks)),
+        board_is_paired=is_paired,
+        board_is_suited=is_suited
+    )
 
-def create_features_for_player(player_idx, seat_count, hole_cards, board_cards, context):
-    """Create features for a specific player."""
-    features = {}
+def player_aggressiveness():
+    """Generate random aggressiveness features."""
+    aggressive = random.randint(0, 3)
+    passive = random.randint(0, 3)
+    total = aggressive + passive + random.randint(0, 2)
+    ratio = aggressive / max(total, 1)
     
-    # Player identification
-    features["player_idx"] = player_idx
-    features["player_id"] = f"player_{player_idx}"
+    return dict(
+        player_aggressive_actions=aggressive,
+        player_passive_actions=passive,
+        player_total_actions=total,
+        player_aggressiveness_ratio=ratio
+    )
+
+def create_player_perspective_features(players, target_player_idx):
+    """Create features from a specific player's perspective with opponent features."""
+    target_player = players[target_player_idx]
     
-    # Game context
-    features["seat_count"] = seat_count
-    features["pot_size"] = context.get("pot_size", 1000)
-    features["min_bet"] = context.get("min_bet", 10)
-    features["total_antes"] = context.get("total_antes", 0)
-    features["total_blinds"] = context.get("total_blinds", 15)
-    features["is_heads_up"] = 1 if seat_count == 2 else 0
-    features["is_multiway"] = 1 if seat_count > 2 else 0
-    features["opponent_count"] = seat_count - 1
+    # Base features for the target player
+    features = {
+        "player_idx": target_player_idx,
+        "seat_count": len(players),
+        "pot_size": target_player["pot_size"],
+        "table": "demo_table",
+        "position": target_player_idx,
+        "is_button": target_player["is_button"],
+        "is_small_blind": target_player["is_small_blind"],
+        "is_big_blind": target_player["is_big_blind"],
+        "is_early_position": target_player["is_early_position"],
+        "is_middle_position": target_player["is_middle_position"],
+        "is_late_position": target_player["is_late_position"],
+        "player_starting_stack": target_player["player_starting_stack"],
+        "player_contributed_to_pot": 0,
+        "player_bet_size": 0,
+    }
     
-    # Position features
-    features["position"] = player_idx
-    features["is_button"] = 1 if player_idx == context.get("button", 0) else 0
-    features["is_small_blind"] = 1 if player_idx == context.get("small_blind_pos", 0) else 0
-    features["is_big_blind"] = 1 if player_idx == context.get("big_blind_pos", 1) else 0
-    features["is_early_position"] = 1 if player_idx < seat_count // 3 else 0
-    features["is_middle_position"] = 1 if seat_count // 3 <= player_idx < 2 * seat_count // 3 else 0
-    features["is_late_position"] = 1 if player_idx >= 2 * seat_count // 3 else 0
-    
-    # Player actions (simulated)
-    features["player_action_count"] = context.get("player_action_count", 2)
-    features["player_aggressive_actions"] = context.get("player_aggressive_actions", 1)
-    features["player_passive_actions"] = context.get("player_passive_actions", 1)
-    features["player_folded"] = 0  # We're predicting before fold
-    features["player_all_in"] = 0
-    features["player_starting_stack"] = context.get("starting_stack", 1000)
-    features["player_final_stack"] = context.get("starting_stack", 1000)  # No change yet
-    features["player_contributed_to_pot"] = context.get("contributed_to_pot", 10)
-    features["player_bet_size"] = context.get("bet_size", 0)
-    features["player_stack_change"] = 0
-    
-    # Board features
-    board_features = calculate_board_features(board_cards)
-    features.update(board_features)
-    
-    # Hole card features
-    hole_features = calculate_hand_features(hole_cards[0], hole_cards[1])
+    # Add hole card features
+    hole_features = player_hand_features(target_player["hole_card1"], target_player["hole_card2"])
     features.update(hole_features)
     
     # Add hole cards as categorical features
-    features["hole_card1"] = hole_cards[0]
-    features["hole_card2"] = hole_cards[1]
+    features["hole_card1"] = target_player["hole_card1"]
+    features["hole_card2"] = target_player["hole_card2"]
     
-    # Add board cards as categorical features
+    # Add board cards
+    board = [target_player[f"board_card{i+1}"] for i in range(5)]
     for i in range(5):
-        features[f"board_card{i+1}"] = board_cards[i] if i < len(board_cards) else "unknown"
+        features[f"board_card{i+1}"] = board[i] if i < len(board) else "unknown"
     
-    # Add opponent information (simplified)
-    for opp_idx in range(seat_count):
-        if opp_idx != player_idx:
-            features[f"opponent_{opp_idx}_position"] = opp_idx
-            features[f"opponent_{opp_idx}_action_count"] = context.get("opponent_action_count", 1)
-            features[f"opponent_{opp_idx}_folded"] = 0
-            features[f"opponent_{opp_idx}_all_in"] = 0
+    # Add board features
+    features.update(board_features(board))
     
-    # Target variable (not used for prediction, but needed for feature consistency)
+    # Add opponent features (up to 5 opponents)
+    opponent_count = 0
+    for opp_idx, opp_player in enumerate(players):
+        if opp_idx != target_player_idx and opponent_count < 5:
+            opp_hole_features = player_hand_features(opp_player["hole_card1"], opp_player["hole_card2"])
+            
+            features[f"opp_{opponent_count+1}_has_hole_cards"] = opp_hole_features["has_hole_cards"]
+            features[f"opp_{opponent_count+1}_high_card"] = opp_hole_features["hole_high_card"]
+            features[f"opp_{opponent_count+1}_low_card"] = opp_hole_features["hole_low_card"]
+            features[f"opp_{opponent_count+1}_is_paired"] = opp_hole_features["hole_is_paired"]
+            features[f"opp_{opponent_count+1}_is_suited"] = opp_hole_features["hole_is_suited"]
+            features[f"opp_{opponent_count+1}_is_broadway"] = opp_hole_features["hole_is_broadway"]
+            
+            opponent_count += 1
+    
+    # Fill remaining opponent slots with zeros
+    for opp_num in range(opponent_count + 1, 6):
+        features[f"opp_{opp_num}_has_hole_cards"] = 0
+        features[f"opp_{opp_num}_high_card"] = 0
+        features[f"opp_{opp_num}_low_card"] = 0
+        features[f"opp_{opp_num}_is_paired"] = 0
+        features[f"opp_{opp_num}_is_suited"] = 0
+        features[f"opp_{opp_num}_is_broadway"] = 0
+    
+    # Add player aggressiveness
+    features.update(target_player["aggressiveness"])
+    
+    # Target variable (not used for prediction, just for structure)
     features["is_winner"] = 0
     features["winnings"] = 0
     
     return features
 
-def display_card(card, size="medium"):
-    """Display a card with proper styling."""
-    if card == "unknown":
-        return f"<div class='card-display' style='background: #f8f9fa; color: #6c757d;'>{card}</div>"
-    
-    rank, suit = parse_card(card)
-    if not rank or not suit:
-        return f"<div class='card-display'>{card}</div>"
-    
-    # Color coding
-    color_class = "red-card" if suit in ["h", "d"] else "black-card"
-    
-    # Suit symbols
-    suit_symbols = {"h": "♥", "d": "♦", "c": "♣", "s": "♠"}
-    suit_symbol = suit_symbols.get(suit, suit)
-    
-    return f"<div class='card-display {color_class}'>{rank}{suit_symbol}</div>"
-
-def create_win_probability_chart(probabilities, player_names):
-    """Create a bar chart of win probabilities."""
-    fig = go.Figure()
-    
-    # Color coding based on probability
-    colors = []
-    for prob in probabilities:
-        if prob > 0.3:
-            colors.append('#28a745')  # Green for high probability
-        elif prob > 0.15:
-            colors.append('#ffc107')  # Yellow for medium probability
-        else:
-            colors.append('#dc3545')  # Red for low probability
-    
-    fig.add_trace(go.Bar(
-        x=player_names,
-        y=probabilities,
-        marker_color=colors,
-        text=[f'{p:.1%}' for p in probabilities],
-        textposition='auto',
-        hovertemplate='<b>%{x}</b><br>Win Probability: %{y:.1%}<extra></extra>'
-    ))
-    
-    fig.update_layout(
-        title="Win Probability by Player",
-        xaxis_title="Player",
-        yaxis_title="Win Probability",
-        yaxis_tickformat='.1%',
-        yaxis_range=[0, max(probabilities) * 1.2],
-        showlegend=False,
-        height=400
-    )
-    
-    return fig
-
-def create_hand_strength_analysis(hole_cards, board_cards):
-    """Create hand strength analysis visualization."""
-    if hole_cards[0] == "unknown" or hole_cards[1] == "unknown":
-        return None
-    
-    # Calculate hand features
-    hole_features = calculate_hand_features(hole_cards[0], hole_cards[1])
-    board_features = calculate_board_features(board_cards)
-    
-    # Create subplot
-    fig = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=('Hole Card Strength', 'Board Analysis', 'Hand Characteristics', 'Position & Context'),
-        specs=[[{"type": "indicator"}, {"type": "indicator"}],
-               [{"type": "bar"}, {"type": "bar"}]]
-    )
-    
-    # Hole card strength gauge
-    hole_strength = (hole_features["hole_card_high"] + hole_features["hole_card_low"]) / 28  # Normalize to 0-1
-    fig.add_trace(go.Indicator(
-        mode="gauge+number+delta",
-        value=hole_strength * 100,
-        domain={'x': [0, 1], 'y': [0, 1]},
-        title={'text': "Hole Card Strength"},
-        gauge={'axis': {'range': [None, 100]},
-               'bar': {'color': "darkblue"},
-               'steps': [{'range': [0, 33], 'color': "lightgray"},
-                        {'range': [33, 66], 'color': "gray"},
-                        {'range': [66, 100], 'color': "darkgray"}]}
-    ), row=1, col=1)
-    
-    # Board strength gauge
-    board_strength = board_features["board_broadway_count"] / 5  # Normalize to 0-1
-    fig.add_trace(go.Indicator(
-        mode="gauge+number+delta",
-        value=board_strength * 100,
-        domain={'x': [0, 1], 'y': [0, 1]},
-        title={'text': "Board Strength"},
-        gauge={'axis': {'range': [None, 100]},
-               'bar': {'color': "darkgreen"},
-               'steps': [{'range': [0, 33], 'color': "lightgray"},
-                        {'range': [33, 66], 'color': "gray"},
-                        {'range': [66, 100], 'color': "darkgray"}]}
-    ), row=1, col=2)
-    
-    # Hand characteristics
-    hand_chars = {
-        'Suited': hole_features["hole_cards_suited"],
-        'Paired': hole_features["hole_cards_paired"],
-        'Broadway': hole_features["is_broadway"],
-        'High Card': 1 if hole_features["hole_card_high"] >= 12 else 0
-    }
-    
-    fig.add_trace(go.Bar(
-        x=list(hand_chars.keys()),
-        y=list(hand_chars.values()),
-        marker_color=['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4'],
-        name="Hand Characteristics"
-    ), row=2, col=1)
-    
-    # Board characteristics
-    board_chars = {
-        'Broadway Cards': board_features["board_broadway_count"],
-        'Aces': board_features["board_ace_count"],
-        'Kings': board_features["board_king_count"],
-        'Connected': 1 if board_features["board_card_count"] >= 3 else 0
-    }
-    
-    fig.add_trace(go.Bar(
-        x=list(board_chars.keys()),
-        y=list(board_chars.values()),
-        marker_color=['#feca57', '#ff9ff3', '#54a0ff', '#5f27cd'],
-        name="Board Characteristics"
-    ), row=2, col=2)
-    
-    fig.update_layout(height=600, showlegend=False)
-    return fig
-
-def generate_random_features():
-    """Generate a full random feature vector for the model (as a dict)."""
-    # Load model to get feature names
-    model = load_model()
-    if model is None:
-        return {}
-    
-    feature_names = model.feature_names_
-    features = {}
-    
-    # Generate a full deck and shuffle
-    deck = get_card_options()
+def generate_random_hand():
+    """Generate a random 6-player poker hand."""
+    deck = get_deck()
     random.shuffle(deck)
     
-    # Generate random game parameters
-    seat_count = random.randint(2, 10)
-    player_idx = random.randint(0, seat_count-1)
+    seat_count = 6
+    board = [deck.pop() for _ in range(5)]
+    players = []
     
-    # Initialize all features with defaults
-    for name in feature_names:
-        features[name] = 0  # Default to 0
-    
-    # Set specific features
-    features["seat_count"] = seat_count
-    features["player_idx"] = player_idx
-    features["position"] = player_idx
-    features["opponent_count"] = seat_count - 1
-    features["is_heads_up"] = int(seat_count == 2)
-    features["is_multiway"] = int(seat_count > 2)
-    
-    # Game context
-    features["pot_size"] = random.randint(500, 5000)
-    features["min_bet"] = random.choice([10, 20, 50])
-    features["total_antes"] = random.choice([0, 10, 20])
-    features["total_blinds"] = random.choice([15, 30, 50])
-    
-    # Position features
-    features["is_button"] = random.randint(0, 1)
-    features["is_small_blind"] = random.randint(0, 1)
-    features["is_big_blind"] = random.randint(0, 1)
-    features["is_early_position"] = random.randint(0, 1)
-    features["is_middle_position"] = random.randint(0, 1)
-    features["is_late_position"] = random.randint(0, 1)
-    
-    # Player actions
-    features["player_action_count"] = random.randint(0, 6)
-    features["player_aggressive_actions"] = random.randint(0, 3)
-    features["player_passive_actions"] = random.randint(0, 3)
-    features["player_folded"] = 0  # We're predicting before fold
-    features["player_all_in"] = random.randint(0, 1)
-    features["player_starting_stack"] = random.randint(500, 5000)
-    features["player_final_stack"] = features["player_starting_stack"]  # No change yet
-    features["player_contributed_to_pot"] = random.randint(0, 500)
-    features["player_bet_size"] = random.randint(0, 500)
-    features["player_stack_change"] = 0
-    
-    # Board features
-    features["board_card_count"] = random.randint(0, 5)
-    features["board_high_card"] = random.randint(0, 14)
-    features["board_low_card"] = random.randint(0, 14)
-    features["board_rank_sum"] = random.randint(0, 70)
-    features["board_broadway_count"] = random.randint(0, 5)
-    features["board_ace_count"] = random.randint(0, 4)
-    features["board_king_count"] = random.randint(0, 4)
-    features["board_queen_count"] = random.randint(0, 4)
-    features["board_jack_count"] = random.randint(0, 4)
-    features["board_ten_count"] = random.randint(0, 4)
-    
-    # Hole card features
-    features["has_hole_cards"] = 1
-    features["hole_card_high"] = random.randint(2, 14)
-    features["hole_card_low"] = random.randint(2, 14)
-    features["hole_cards_suited"] = random.randint(0, 1)
-    features["hole_cards_paired"] = random.randint(0, 1)
-    features["hole_card_gap"] = random.randint(0, 12)
-    features["hole_card_rank_sum"] = random.randint(4, 28)
-    features["is_broadway"] = random.randint(0, 1)
-    features["is_ace"] = random.randint(0, 1)
-    features["is_king"] = random.randint(0, 1)
-    features["is_queen"] = random.randint(0, 1)
-    features["is_jack"] = random.randint(0, 1)
-    features["is_ten"] = random.randint(0, 1)
-    
-    # Deal cards
-    if len(deck) >= 7:  # Need 2 hole + 5 board
-        features["hole_card1"] = deck.pop()
-        features["hole_card2"] = deck.pop()
-        features["board_card1"] = deck.pop()
-        features["board_card2"] = deck.pop()
-        features["board_card3"] = deck.pop()
-        features["board_card4"] = deck.pop()
-        features["board_card5"] = deck.pop()
-    else:
-        features["hole_card1"] = "unknown"
-        features["hole_card2"] = "unknown"
-        features["board_card1"] = "unknown"
-        features["board_card2"] = "unknown"
-        features["board_card3"] = "unknown"
-        features["board_card4"] = "unknown"
-        features["board_card5"] = "unknown"
-    
-    # Opponent features (simplified)
     for i in range(seat_count):
-        if i != player_idx:
-            features[f"opponent_{i}_position"] = i
-            features[f"opponent_{i}_action_count"] = random.randint(0, 6)
-            features[f"opponent_{i}_folded"] = random.randint(0, 1)
-            features[f"opponent_{i}_all_in"] = random.randint(0, 1)
-    
-    # Target variables (not used for prediction)
-    features["is_winner"] = 0
-    features["winnings"] = 0
-    
-    return features
-
-# --- UI ---
-st.title("♠️ Poker Model Minimal Demo")
-st.markdown("""
-Minimal demo: generate a full random model input, view all features, and predict win probability.
-""")
-
-if "random_features" not in st.session_state:
-    st.session_state.random_features = None
-
-col1, col2 = st.columns([1, 2])
-
-with col1:
-    if st.button("🎲 Generate Random Model Input Features", use_container_width=True):
-        st.session_state.random_features = generate_random_features()
-
-with col2:
-    if st.session_state.random_features:
-        features = st.session_state.random_features
-        # Minimalistic visualization: show as table, highlight key features
-        df = pd.DataFrame(list(features.items()), columns=["Feature", "Value"])
-        # Convert all values to strings to avoid Arrow conversion issues
-        df["Value"] = df["Value"].astype(str)
+        card1, card2 = deck.pop(), deck.pop()
         
-        def highlight(row):
-            if any(k in row["Feature"] for k in ["hole_card", "board_card"]):
-                return ["background-color: #e3f2fd"]*2
-            if row["Feature"] in ["player_idx", "seat_count", "position"]:
-                return ["background-color: #fff3e0"]*2
-            return [""]*2
+        # Base player features
+        features = {
+            "player_idx": i,
+            "seat_count": seat_count,
+            "pot_size": random.randint(500, 5000),
+            "min_bet": random.choice([10, 20, 50]),
+            "position": i,
+            "is_button": int(i == 0),
+            "is_small_blind": int(i == 1),
+            "is_big_blind": int(i == 2),
+            "is_early_position": int(i < 2),
+            "is_middle_position": int(2 <= i < 4),
+            "is_late_position": int(i >= 4),
+            "player_starting_stack": random.randint(500, 5000),
+            "player_contributed_to_pot": random.randint(0, 500),
+            "player_bet_size": random.randint(0, 500),
+            "hole_card1": card1,
+            "hole_card2": card2,
+        }
         
-        # Show only first 100 features to avoid overwhelming the UI
-        st.dataframe(df.head(100).style.apply(highlight, axis=1), use_container_width=True, height=400)
-        if len(df) > 100:
-            st.info(f"Showing first 100 of {len(df)} features. Use the scrollbar to see more.")
+        # Add hand features
+        features.update(player_hand_features(card1, card2))
+        
+        # Add board cards
+        for j in range(5):
+            features[f"board_card{j+1}"] = board[j] if j < len(board) else "unknown"
+        
+        # Add board features
+        features.update(board_features(board))
+        
+        # Add aggressiveness
+        features["aggressiveness"] = player_aggressiveness()
+        
+        # Target variables
+        features["is_winner"] = 0
+        features["winnings"] = 0
+        
+        players.append(features)
+    
+    return players, board
+
+def get_probability_class(prob):
+    """Get CSS class for probability styling."""
+    if prob >= 0.3:
+        return "probability-high"
+    elif prob >= 0.15:
+        return "probability-medium"
     else:
-        st.info("Click the button to generate random model input features.")
+        return "probability-low"
 
-st.divider()
+def display_card(card, suit_color=True):
+    """Display a card with proper styling."""
+    if card == "unknown":
+        return f'<div class="card-display">??</div>'
+    
+    rank, suit = parse_card(card)
+    color_class = "red-card" if suit in ["h", "d"] else "black-card"
+    suit_symbol = {"h": "♥", "d": "♦", "c": "♣", "s": "♠"}.get(suit, suit)
+    
+    return f'<div class="card-display {color_class}">{rank}{suit_symbol}</div>'
 
-if st.session_state.random_features:
-    if st.button("🤖 Predict Win Probability", use_container_width=True):
-        model = load_model()
-        if model is not None:
-            X = pd.DataFrame([st.session_state.random_features])
-            # Ensure categorical features are string
-            cat_features = ['hole_card1', 'hole_card2', 'board_card1', 'board_card2', 'board_card3', 'board_card4', 'board_card5']
-            for col in cat_features:
-                if col in X.columns:
-                    X[col] = X[col].astype(str)
-            # Ensure correct order
-            X = X[model.feature_names_]
+# Main app logic
+if "random_hand" not in st.session_state:
+    st.session_state.random_hand = None
+    st.session_state.board = None
+
+if st.button("🎲 Generate Random 6-Player Hand", use_container_width=True):
+    players, board = generate_random_hand()
+    st.session_state.random_hand = players
+    st.session_state.board = board
+
+if st.session_state.random_hand:
+    players = st.session_state.random_hand
+    board = st.session_state.board
+    
+    # Load model
+    model, metadata, label_encoders, feature_columns = load_focused_model()
+    
+    if model is not None:
+        st.markdown("### 🃏 Current Hand")
+        
+        # Display board
+        st.markdown("**Community Cards:**")
+        board_html = " ".join([display_card(card) for card in board])
+        st.markdown(board_html, unsafe_allow_html=True)
+        
+        # Generate predictions for each player
+        predictions = []
+        
+        for player_idx in range(len(players)):
+            # Create features from this player's perspective
+            player_features = create_player_perspective_features(players, player_idx)
+            
+            # Convert to DataFrame
+            df_player = pd.DataFrame([player_features])
+            
+            # Encode categorical features
+            if label_encoders:
+                for col, encoder in label_encoders.items():
+                    if col in df_player.columns:
+                        df_player[f"{col}_encoded"] = encoder.transform(df_player[col].astype(str))
+                        df_player = df_player.drop(columns=[col])
+            
+            # Ensure correct feature order
+            if feature_columns:
+                missing_cols = set(feature_columns) - set(df_player.columns)
+                for col in missing_cols:
+                    df_player[col] = 0
+                X = df_player[feature_columns]
+            else:
+                X = df_player.drop(columns=['is_winner', 'winnings'], errors='ignore')
+            
+            # Make prediction
             prob = model.predict_proba(X)[0, 1]
-            st.success(f"Win Probability: {prob:.1%}")
-        else:
-            st.error("Failed to load model")
+            predictions.append({
+                'player_idx': player_idx,
+                'probability': prob,
+                'hole_cards': [players[player_idx]["hole_card1"], players[player_idx]["hole_card2"]],
+                'position': players[player_idx]["position"],
+                'stack': players[player_idx]["player_starting_stack"],
+                'aggressiveness': players[player_idx]["aggressiveness"]["player_aggressiveness_ratio"]
+            })
+        
+        # Sort by probability
+        predictions.sort(key=lambda x: x['probability'], reverse=True)
+        
+        # Display results
+        st.markdown("### 📊 Win Probability Predictions")
+        
+        # Create tabs for different views
+        tab1, tab2, tab3 = st.tabs(["🎯 Player View", "📈 Chart View", "📋 Detailed Table"])
+        
+        with tab1:
+            # Player cards view
+            cols = st.columns(3)
+            for i, pred in enumerate(predictions):
+                with cols[i % 3]:
+                    prob_class = get_probability_class(pred['probability'])
+                    st.markdown(f"""
+                    <div class="player-card {prob_class}">
+                        <h4>Player {pred['player_idx']}</h4>
+                        <p><strong>Win Probability: {pred['probability']:.1%}</strong></p>
+                        <p>Position: {pred['position']} | Stack: ${pred['stack']:,}</p>
+                        <p>Aggressiveness: {pred['aggressiveness']:.2f}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Display hole cards
+                    card1_html = display_card(pred['hole_cards'][0])
+                    card2_html = display_card(pred['hole_cards'][1])
+                    st.markdown(f"<p>Hole Cards: {card1_html} {card2_html}</p>", unsafe_allow_html=True)
+        
+        with tab2:
+            # Chart view
+            fig = go.Figure()
+            
+            fig.add_trace(go.Bar(
+                x=[f"Player {p['player_idx']}" for p in predictions],
+                y=[p['probability'] for p in predictions],
+                text=[f"{p['probability']:.1%}" for p in predictions],
+                textposition='auto',
+                marker_color=['#4facfe' if p['probability'] >= 0.3 else 
+                             '#f093fb' if p['probability'] >= 0.15 else '#ffecd2' 
+                             for p in predictions]
+            ))
+            
+            fig.update_layout(
+                title="Win Probability by Player",
+                xaxis_title="Player",
+                yaxis_title="Win Probability",
+                yaxis=dict(tickformat='.1%'),
+                height=400
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with tab3:
+            # Detailed table
+            df_results = pd.DataFrame(predictions)
+            df_results['Win Probability'] = df_results['probability'].apply(lambda x: f"{x:.1%}")
+            df_results['Hole Cards'] = df_results['hole_cards'].apply(lambda x: f"{x[0]} {x[1]}")
+            df_results['Aggressiveness'] = df_results['aggressiveness'].apply(lambda x: f"{x:.2f}")
+            
+            display_cols = ['player_idx', 'Hole Cards', 'Win Probability', 'position', 'stack', 'Aggressiveness']
+            st.dataframe(df_results[display_cols], use_container_width=True)
+        
+        # Model info
+        with st.expander("ℹ️ Model Information"):
+            st.markdown(f"""
+            - **Model Type**: CatBoost Classifier
+            - **Features Used**: {len(feature_columns) if feature_columns else 'Unknown'}
+            - **Training Data**: 194,303 samples
+            - **Model Performance**: 92% ROC AUC
+            - **Key Features**: Position, aggressiveness, opponent hand strength
+            """)
+    
+    else:
+        st.error("❌ Model not loaded. Please ensure the model files exist in models/focused/")
+else:
+    st.info("🎲 Click the button above to generate a random 6-player hand and see win probability predictions!")
 
 # App runs automatically when script is executed 

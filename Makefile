@@ -1,7 +1,7 @@
 # Poker ML Project Makefile
 # Use: make <target>
 
-.PHONY: help install test clean run-app preprocess-optimized preprocess-optimized-sample train-model train-optimized-quick sample-pipeline full-pipeline status
+.PHONY: help install test clean run-app preprocess-focused preprocess-focused-sample train-focused train-focused-sample focused-pipeline status
 
 # Default target
 help:
@@ -17,16 +17,15 @@ help:
 	@echo "  test            Run all tests"
 	@echo ""
 	@echo "Data Processing:"
-	@echo "  preprocess Preprocess full 27GB dataset (conservative, 10K chunks, 2 cores)"
-	@echo "  preprocess-sample Preprocess sample dataset for testing"
+	@echo "  preprocess-focused         Preprocess full 27GB dataset (500K chunks, optimized for larger files)"
+	@echo "  preprocess-focused-sample  Preprocess sample dataset for testing"
 	@echo ""
 	@echo "Model Operations:"
-	@echo "  train-model     Train poker win probability model on conservative data"
-	@echo "  train-model-sample Train model on sample data (2 chunks) for testing"
+	@echo "  train-focused              Train focused model with meaningful features only"
+	@echo "  train-focused-sample       Train focused model on sample data"
 	@echo ""
 	@echo "Pipelines:"
-	@echo "  sample-pipeline Complete sample pipeline (sample preprocess + quick train)"
-	@echo "  full-pipeline   Complete full pipeline (full preprocess + full train)"
+	@echo "  focused-pipeline           Complete focused pipeline (focused preprocess + focused train)"
 	@echo ""
 	@echo "Application:"
 	@echo "  run-app         Run Streamlit web app"
@@ -60,57 +59,47 @@ test:
 	@echo "Running tests..."
 	PYTHONPATH=. uv run pytest tests/ -v
 
-preprocess:
-	@echo "🚀 Starting conservative preprocessing of full 27GB dataset (5K chunks, 1 core)..."
-	@mkdir -p data/processed/conservative
-	PYTHONPATH=. uv run python src/data/preprocess_conservative.py \
+preprocess-focused:
+	@echo "🎯 Starting focused preprocessing of full 27GB dataset (500K chunks, optimized for larger files)..."
+	@mkdir -p data/processed/focused
+	PYTHONPATH=. uv run python src/data/preprocess_focused.py \
 		--input data/raw/poker_training_data.jsonl \
-		--output data/processed/conservative \
-		--chunk-size 100000 \
-		--max-workers 8
+		--output data/processed/focused \
+		--chunk-size 500000
 
-preprocess-sample:
-	@echo "🧪 Starting conservative preprocessing of sample dataset for testing..."
-	@mkdir -p data/processed/conservative
-	PYTHONPATH=. uv run python src/data/preprocess_conservative.py \
+preprocess-focused-sample:
+	@echo "🧪 Starting focused preprocessing of sample dataset for testing..."
+	@mkdir -p data/processed/focused
+	PYTHONPATH=. uv run python src/data/preprocess_focused.py \
 		--input data/raw/poker_training_data.jsonl \
-		--output data/processed/conservative \
-		--chunk-size 10000 \
-		--max-workers 8 \
-		--max-chunks 5
+		--output data/processed/focused \
+		--chunk-size 1000000 \
+		--max-chunks 10
 
 # Model Operations
-train-model:
-	@echo "🤖 Training poker win probability model on conservative data..."
-	@mkdir -p models/conservative
-	PYTHONPATH=. uv run python src/models/train_conservative.py \
-		--data-dir data/processed/conservative \
-		--output-dir models/conservative
+train-focused:
+	@echo "🎯 Training focused poker model with meaningful features..."
+	@mkdir -p models/focused
+	PYTHONPATH=. uv run python src/models/train_focused.py \
+		--data-dir data/processed/focused \
+		--output-dir models/focused
 
-train-model-sample:
-	@echo "🧪 Training model on sample data (first 2 chunks)..."
-	@mkdir -p models/conservative
-	PYTHONPATH=. uv run python src/models/train_conservative.py \
-		--data-dir data/processed/conservative \
-		--output-dir models/conservative \
-		--max-chunks 2
+train-focused-sample:
+	@echo "🧪 Training focused model on sample data (first 10 chunks)..."
+	@mkdir -p models/focused
+	PYTHONPATH=. uv run python src/models/train_focused.py \
+		--data-dir data/processed/focused \
+		--output-dir models/focused \
+		--max-chunks 10
 
 # Pipelines
-sample-pipeline:
-	@echo "🎯 Running SAMPLE pipeline (sample preprocess + quick train)..."
-	@echo "Step 1: Preprocessing sample data..."
-	$(MAKE) preprocess-sample
-	@echo "Step 2: Quick training on subset..."
-	$(MAKE) train-model-sample
-	@echo "✅ Sample pipeline completed! Model ready for testing."
-
-full-pipeline:
-	@echo "🚀 Running FULL pipeline (full preprocess + full train)..."
-	@echo "Step 1: Preprocessing full dataset..."
-	$(MAKE) preprocess
-	@echo "Step 2: Full training on large dataset..."
-	$(MAKE) train-model
-	@echo "✅ Full pipeline completed! Production model ready."
+focused-pipeline:
+	@echo "🎯 Running FOCUSED pipeline (focused preprocess + focused train)..."
+	@echo "Step 1: Focused preprocessing with meaningful features only..."
+	$(MAKE) preprocess-focused
+	@echo "Step 2: Focused training with simplified model..."
+	$(MAKE) train-focused
+	@echo "✅ Focused pipeline completed! Clean, interpretable model ready."
 
 # Application
 run-app:
