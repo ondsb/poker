@@ -63,10 +63,8 @@ coverage.xml
 # Data and models
 /data/
 data/
-models/
 catboost_info/
 *.joblib
-*.cbm
 *.pkl
 *.parquet
 *.jsonl
