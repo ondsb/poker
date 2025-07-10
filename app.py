@@ -13,7 +13,7 @@ warnings.filterwarnings("ignore")
 
 # Page config
 st.set_page_config(
-    page_title="Poker Win Probability - CatBoost Ensemble",
+    page_title="Poker Win Probability",
     page_icon="♠️",
     layout="wide"
 )
@@ -186,7 +186,6 @@ else:
 st.markdown("""
 <div class="main-header">
     <h1>♠️ Poker Win Probability - CatBoost Ensemble</h1>
-    <p>Advanced ensemble model with 10 diverse CatBoost models for superior win probability prediction.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -451,7 +450,7 @@ with tab1:
         st.markdown("### 📊 Win Probability Predictions")
         
         # Add toggle for raw vs normalized probabilities
-        show_raw = st.checkbox("🔍 Show Raw Model Predictions (Advanced)", help="Toggle to see the raw ensemble outputs before normalization")
+        show_raw = st.checkbox("🔍 Show Raw Model Predictions", help="Toggle to see the raw ensemble outputs before normalization")
         
         pred_tab1, pred_tab2, pred_tab3 = st.tabs(["🎯 Player View", "📈 Chart View", "📋 Detailed Table"])
         
@@ -510,17 +509,8 @@ with tab1:
                 yaxis_title="Win Probability",
                 yaxis=dict(tickformat='.1%'),
                 height=400,
-                annotations=[
-                    dict(
-                        x=0.02, y=0.98, xref="paper", yref="paper",
-                        text="<b>Color Legend:</b><br>🟢 Very High (≥50%) | 🔵 High (30-50%)<br>⚪ Medium (10-30%) | ⚫ Low (<10%)",
-                        showarrow=False,
-                        bgcolor="rgba(255,255,255,0.8)",
-                        bordercolor="black",
-                        borderwidth=1,
-                        font=dict(size=10)
-                    )
-                ]
+
+                
             )
             st.plotly_chart(fig, use_container_width=True)
         
@@ -614,10 +604,6 @@ with tab2:
         st.info("🎲 Generate a random hand first to see input features!")
 
 with tab3:
-    # Feature Analysis
-    st.markdown("### 📊 Feature Importance Analysis")
-    
-    # Generate feature importance data
     feature_importance = generate_feature_importance_data()
     
     # Model Overview
@@ -631,45 +617,6 @@ with tab3:
         st.metric("Test ROC AUC", "0.8958")
     with col4:
         st.metric("Features", "56")
-    
-    # Model Architecture & Training Details
-    st.markdown("#### 🏗️ Model Architecture & Training")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("""
-        **Model Architecture:**
-        - **Algorithm**: CatBoost Ensemble (10 models)
-        - **Objective**: Binary Classification (Win/Lose)
-        - **Loss Function**: Log Loss
-        - **Regularization**: L2 regularization
-        - **Tree Depth**: 4-8 (varies by model)
-        - **Learning Rate**: 0.05-0.15 (varies by model)
-        
-        **Training Strategy:**
-        - **Cross-Validation**: 5-fold stratified CV
-        - **Class Balancing**: SMOTE for imbalanced data
-        - **Feature Selection**: All 56 features used
-        - **Hyperparameter Tuning**: Diverse configurations
-        - **Early Stopping**: Prevent overfitting
-        """)
-    
-    with col2:
-        st.markdown("""
-        **Data Quality:**
-        - **Source**: Pluribus synthetic dataset
-        - **Hands**: 6-player Texas Hold'em
-        - **Information Level**: Complete hole cards known
-        - **Board States**: Pre-flop, Flop, Turn, River
-        - **Validation**: Holdout test set (20%)
-        
-        **Feature Engineering:**
-        - **Hand Strength**: 6 derived features
-        - **Position**: 5 button-relative features
-        - **Stack Dynamics**: 5 size/ratio features
-        - **Opponent Modeling**: 30 opponent hand features
-        - **Board Texture**: 4 community card features
-        """)
     
     # Feature Importance Analysis
     st.markdown("#### 🔍 Feature Importance Analysis")
@@ -783,71 +730,3 @@ with tab3:
         
         st.divider()
     
-    # Statistical Analysis
-    st.markdown("#### 📈 Statistical Analysis")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Total Features", len(df_importance))
-    with col2:
-        st.metric("Feature Categories", len(categories))
-    with col3:
-        st.metric("Avg Importance", f"{df_importance['Importance'].mean():.3f}")
-    with col4:
-        st.metric("Top Feature", df_importance.iloc[0]['Feature'])
-    
-    # Key insights
-    st.markdown("**🔍 Key Statistical Insights:**")
-    
-    insights = [
-        f"• **Hand Strength Dominance**: {df_importance[df_importance['Category'] == 'Hand Strength']['Importance'].sum():.1%} of total importance",
-        f"• **Position Impact**: {df_importance[df_importance['Category'] == 'Position']['Importance'].sum():.1%} of total importance",
-        f"• **Opponent Modeling**: {df_importance[df_importance['Category'] == 'Opponent Modeling']['Importance'].sum():.1%} of total importance",
-        f"• **Top Feature**: {df_importance.iloc[0]['Feature']} ({df_importance.iloc[0]['Importance']:.1%} importance)",
-        f"• **Feature Distribution**: {len(df_importance[df_importance['Importance'] > 0.05])} features have >5% importance",
-        f"• **Category Balance**: {len(categories)} categories provide diverse information"
-    ]
-    
-    for insight in insights:
-        st.markdown(insight)
-    
-    # Model Performance Insights
-    st.markdown("#### 💡 Model Performance Insights")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("""
-        **Strengths:**
-        - ✅ **High ROC AUC (89.6%)**: Excellent discrimination between winners and losers
-        - ✅ **Feature Rich**: 56 engineered features capture complex poker dynamics
-        - ✅ **Complete Information**: All hole cards known for accurate predictions
-        - ✅ **Position Awareness**: Properly accounts for button-relative positioning
-        - ✅ **Opponent Modeling**: Incorporates all 5 opponents' hand information
-        - ✅ **Board Sensitivity**: Responds appropriately to community cards
-        
-        **Key Features:**
-        - Hand strength indicators (high card, paired, suited, connected)
-        - Position and blind information
-        - Stack size dynamics
-        - Board texture analysis
-        - Comprehensive opponent hand features
-        """)
-    
-    with col2:
-        st.markdown("""
-        **Limitations:**
-        - ⚠️ **Synthetic Data**: Trained on Pluribus dataset, not real poker hands
-        - ⚠️ **Fixed Stakes**: Assumes similar betting patterns to training data
-        - ⚠️ **No Action History**: Doesn't consider previous betting rounds
-        - ⚠️ **Static Opponents**: Assumes opponents play optimally
-        - ⚠️ **No ICM**: Doesn't account for tournament payout structures
-        
-        **Recommendations:**
-        - 🔄 **Real Data**: Train on actual poker hand histories
-        - 🔄 **Action Features**: Include betting patterns and action sequences
-        - 🔄 **Player Modeling**: Incorporate opponent-specific tendencies
-        - 🔄 **Dynamic Updates**: Retrain periodically with new data
-        """)
-
-# App runs automatically when script is executed 
